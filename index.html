@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Cash Manager PRO</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body{font-family:Segoe UI,Arial;background:#eef2f6;margin:0}
+header{background:#0f172a;color:#fff;padding:15px;display:flex;align-items:center;gap:15px}
+header img{height:45px}
+.container{max-width:1200px;margin:auto;padding:20px}
+.card{background:#fff;padding:15px;border-radius:10px;margin-bottom:15px;box-shadow:0 4px 10px rgba(0,0,0,.08)}
+h2{color:#0f172a}
+input,select,button{width:100%;padding:8px;margin-top:5px}
+button{background:#2563eb;color:#fff;border:none;border-radius:6px;margin-top:10px;cursor:pointer}
+button.admin{background:#dc2626}
+.hidden{display:none}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{border:1px solid #ddd;padding:6px;text-align:center}
+.dashboard{display:grid;grid-template-columns:1fr 1fr;gap:15px}
+
+@media print{
+ body{width:80mm}
+ .no-print{display:none}
+}
+</style>
+</head>
+
+<body>
+
+<header>
+<img id="logoHeader">
+<h1 id="companyHeader"></h1>
+</header>
+
+<div class="container no-print">
+
+<!-- CONNEXION -->
+<div class="card" id="loginCard">
+<h2>Connexion</h2>
+<input id="user" placeholder="Utilisateur">
+<input id="pass" type="password" placeholder="Mot de passe">
+<button onclick="login()">Connexion</button>
+</div>
+
+<!-- ADMIN -->
+<div id="adminZone" class="card hidden">
+<h2>👑 Administration</h2>
+
+<label>Nom de l'entreprise</label>
+<input id="companyName">
+
+<label>Logo (URL image)</label>
+<input id="companyLogo">
+
+<button class="admin" onclick="saveCompany()">Enregistrer entreprise</button>
+
+<hr>
+
+<input id="newUser" placeholder="Nom caissier">
+<input id="newPass" type="password" placeholder="Mot de passe">
+<button class="admin" onclick="addCashier()">Ajouter / Modifier caissier</button>
+
+<hr>
+
+<select id="serviceOpen">
+<option>Moncash</option>
+<option>Natcash</option>
+</select>
+<input id="opening" type="number" placeholder="Solde d'ouverture">
+<button class="admin" onclick="setOpening()">Définir solde</button>
+</div>
+
+<!-- DASHBOARD -->
+<div class="card hidden" id="mainApp">
+<h2>📊 Tableau de bord</h2>
+<div class="dashboard">
+<canvas id="chartDay"></canvas>
+<canvas id="chartService"></canvas>
+</div>
+</div>
+
+<!-- TRANSACTION -->
+<div class="card hidden" id="transactionZone">
+<h2>Transaction</h2>
+<input id="client" placeholder="Nom du client">
+<select id="service">
+<option>Moncash</option>
+<option>Natcash</option>
+</select>
+<select id="type">
+<option value="depot">Dépôt</option>
+<option value="retrait">Retrait</option>
+</select>
+<input id="amount" type="number" placeholder="Montant">
+<button onclick="addTransaction()">Enregistrer + Imprimer</button>
+</div>
+
+<!-- SOLDES -->
+<div class="card hidden" id="balanceZone">
+<h2>Soldes</h2>
+<p>Moncash : <b id="m">0</b></p>
+<p>Natcash : <b id="n">0</b></p>
+</div>
+
+<!-- RAPPORT -->
+<div class="card hidden" id="reportZone">
+<h2>Rapport journalier</h2>
+<input type="date" id="filterDate" onchange="updateAll()">
+<button onclick="exportExcel()">📄 Export fin de journée</button>
+<table>
+<thead>
+<tr>
+<th>ID</th><th>Date</th><th>Client</th><th>Service</th>
+<th>Type</th><th>Montant</th><th>Caissier</th>
+</tr>
+</thead>
+<tbody id="history"></tbody>
+</table>
+</div>
+
+</div>
+
+<!-- TICKET -->
+<div id="ticket" class="hidden">
+<center>
+<img id="logoTicket" style="height:40px">
+<h3 id="companyTicket"></h3>
+</center>
+<p id="t0"></p>
+<p id="t1"></p>
+<p id="t2"></p>
+<p id="t3"></p>
+<p id="t4"></p>
+<p id="t5"></p>
+<hr>
+<p>Merci pour votre confiance 🙏</p>
+</div>
+
+<script>
+async function hash(text){
+ const buf = await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));
+ return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+let currentUser=null;
+
+let store = JSON.parse(localStorage.getItem("store")) || {
+ company:{name:"CASH MANAGER PRO",logo:"https://via.placeholder.com/120x40?text=LOGO"},
+ users:{},
+ data:{Moncash:0,Natcash:0,history:[],counter:0}
+};
+
+(async()=>{
+ if(!store.users.admin){
+  store.users.admin={pass:await hash("admin123")};
+  save();
+ }
+ applyCompany();
+ updateAll();
+})();
+
+function save(){
+ localStorage.setItem("store",JSON.stringify(store));
+}
+
+function applyCompany(){
+ companyHeader.innerText=store.company.name;
+ companyTicket.innerText=store.company.name;
+ logoHeader.src=store.company.logo;
+ logoTicket.src=store.company.logo;
+ companyName.value=store.company.name;
+ companyLogo.value=store.company.logo;
+}
+
+function saveCompany(){
+ store.company.name=companyName.value;
+ store.company.logo=companyLogo.value;
+ applyCompany();
+ save();
+ alert("Entreprise enregistrée");
+}
+
+async function login(){
+ const u=user.value.trim();
+ const p=await hash(pass.value.trim());
+
+ if(!store.users[u] || store.users[u].pass!==p){
+  alert("Identifiants incorrects");
+  return;
+ }
+
+ currentUser=u;
+ loginCard.classList.add("hidden");
+ mainApp.classList.remove("hidden");
+ transactionZone.classList.remove("hidden");
+ balanceZone.classList.remove("hidden");
+ reportZone.classList.remove("hidden");
+
+ if(u==="admin") adminZone.classList.remove("hidden");
+
+ alert("Connecté : "+u);
+}
+
+async function addCashier(){
+ store.users[newUser.value.trim()]={pass:await hash(newPass.value.trim())};
+ save();
+ alert("Caissier enregistré");
+}
+
+function setOpening(){
+ const s=serviceOpen.value;
+ const v=Number(opening.value)||0;
+
+ store.data[s]=v;
+ store.data.history.push({
+  id:"OPEN-"+Date.now(),
+  date:new Date().toISOString().split("T")[0],
+  client:"SOLDE OUVERTURE",
+  service:s,type:"ouverture",
+  amount:v,user:currentUser
+ });
+ save();
+ updateAll();
+}
+
+function addTransaction(){
+ if(!currentUser){alert("Veuillez vous connecter");return;}
+
+ const a=Number(amount.value);
+ const s=service.value;
+ const t=type.value;
+
+ if(t==="retrait" && a>store.data[s]){
+  alert("Solde insuffisant");
+  return;
+ }
+
+ store.data.counter++;
+ const id="TX-"+store.data.counter.toString().padStart(6,"0");
+
+ store.data[s]+=t==="depot"?a:-a;
+
+ const tr={
+  id,date:new Date().toISOString().split("T")[0],
+  time:new Date().toLocaleTimeString(),
+  client:client.value,
+  service:s,type:t,amount:a,user:currentUser
+ };
+
+ store.data.history.push(tr);
+ save();
+ printTicket(tr);
+ updateAll();
+}
+
+function printTicket(x){
+ t0.innerText="Transaction : "+x.id;
+ t1.innerText="Client : "+x.client;
+ t2.innerText="Service : "+x.service;
+ t3.innerText="Type : "+x.type;
+ t4.innerText="Montant : "+x.amount;
+ t5.innerText=x.date+" "+x.time+" | "+x.user;
+ ticket.classList.remove("hidden");
+ window.print();
+ ticket.classList.add("hidden");
+}
+
+function updateAll(){
+ m.innerText=store.data.Moncash;
+ n.innerText=store.data.Natcash;
+
+ const d=filterDate.value||new Date().toISOString().split("T")[0];
+ history.innerHTML="";
+
+ store.data.history.filter(x=>x.date===d).forEach(x=>{
+  history.innerHTML+=`
+  <tr>
+   <td>${x.id}</td>
+   <td>${x.date}</td>
+   <td>${x.client}</td>
+   <td>${x.service}</td>
+   <td>${x.type}</td>
+   <td>${x.amount}</td>
+   <td>${x.user}</td>
+  </tr>`;
+ });
+
+ updateCharts(d);
+}
+
+function exportExcel(){
+ let csv="ID,Date,Client,Service,Type,Montant,Caissier\n";
+ store.data.history.forEach(x=>{
+  csv+=`${x.id},${x.date},${x.client},${x.service},${x.type},${x.amount},${x.user}\n`;
+ });
+ const a=document.createElement("a");
+ a.href=URL.createObjectURL(new Blob([csv]));
+ a.download="rapport.csv";
+ a.click();
+}
+
+let chartDay,chartService;
+
+function updateCharts(d){
+ let dep=0,ret=0;
+ store.data.history.filter(x=>x.date===d).forEach(x=>{
+  if(x.type==="depot")dep+=x.amount;
+  if(x.type==="retrait")ret+=x.amount;
+ });
+
+ if(chartDay) chartDay.destroy();
+ chartDay=new Chart(document.getElementById("chartDay"),{
+  type:"bar",
+  data:{labels:["Dépôts","Retraits"],datasets:[{data:[dep,ret]}]}
+ });
+
+ if(chartService) chartService.destroy();
+ chartService=new Chart(document.getElementById("chartService"),{
+  type:"pie",
+  data:{labels:["Moncash","Natcash"],
+  datasets:[{data:[store.data.Moncash,store.data.Natcash]}]}
+ });
+}
+</script>
+
+</body>
+</html>
